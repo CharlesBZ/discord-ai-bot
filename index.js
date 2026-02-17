@@ -2,7 +2,7 @@
 // Voice-to-voice Discord bot: Discord VC ⇄ Whisper.cpp ⇄ Ollama ⇄ Piper
 // + persistent memory (recent turns + previous-call summary) saved to ./memory/guild_<id>.json
 //
-// Assumes you already registered /join and /leave slash commands.
+// Assumes you already registered /join, /leave, /goodnight slash commands.
 
 import "dotenv/config";
 import { Client, GatewayIntentBits, Partials, Events } from "discord.js";
@@ -29,7 +29,7 @@ import os from "node:os";
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://127.0.0.1:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen2.5:7b";
 
-const PIPER_BIN = process.env.PIPER_BIN; // e.g. /usr/local/bin/piper OR /home/.../piper
+const PIPER_BIN = process.env.PIPER_BIN; // e.g. /usr/local/bin/piper
 const PIPER_MODEL = process.env.PIPER_MODEL; // e.g. /home/.../en_US-amy-medium.onnx
 const PIPER_SPEAK_RATE = Number(process.env.PIPER_SPEAK_RATE ?? "0.85");
 
@@ -39,9 +39,6 @@ const WHISPER_MODEL = process.env.WHISPER_MODEL; // e.g. /home/.../ggml-base.en.
 const SILENCE_MS = Number(process.env.SILENCE_MS ?? "900"); // stop capture after silence
 const MIN_UTTERANCE_MS = Number(process.env.MIN_UTTERANCE_MS ?? "700"); // ignore tiny clips
 const COOLDOWN_MS = Number(process.env.COOLDOWN_MS ?? "2000"); // per-user cooldown
-
-//TODO:
-// const MEMORY_MAX_TURNS = Number(process.env.MEMORY_MAX_TURNS ?? "60");
 
 const MEMORY_DIR = process.env.MEMORY_DIR ?? "./memory";
 await mkdir(MEMORY_DIR, { recursive: true });
@@ -57,14 +54,14 @@ const GOODNIGHT_PHRASES = [
   { lang: "Dutch", code: "nl", text: "Goedenacht." },
   { lang: "Swedish", code: "sv", text: "God natt." },
   { lang: "Polish", code: "pl", text: "Dobranoc." },
-  { lang: "Russian", code: "ru", text: "Спокойной ночи." }, // Spokoynoy nochi
-  { lang: "Greek", code: "el", text: "Καληνύχτα." }, // Kalinichta
+  { lang: "Russian", code: "ru", text: "Спокойной ночи." },
+  { lang: "Greek", code: "el", text: "Καληνύχτα." },
   { lang: "Turkish", code: "tr", text: "İyi geceler." },
-  { lang: "Arabic", code: "ar", text: "تصبح على خير." }, // Tusbih 'ala khayr
-  { lang: "Hindi", code: "hi", text: "शुभ रात्रि।" }, // Shubh Raatri
-  { lang: "Japanese", code: "ja", text: "おやすみ。" }, // Oyasumi
-  { lang: "Korean", code: "ko", text: "안녕히 주무세요." }, // Annyeonghi jumuseyo
-  { lang: "Chinese (Simplified)", code: "zh", text: "晚安。" }, // Wan'an
+  { lang: "Arabic", code: "ar", text: "تصبح على خير." },
+  { lang: "Hindi", code: "hi", text: "शुभ रात्रि।" },
+  { lang: "Japanese", code: "ja", text: "おやすみ。" },
+  { lang: "Korean", code: "ko", text: "안녕히 주무세요." },
+  { lang: "Chinese (Simplified)", code: "zh", text: "晚安。" },
 ];
 
 // Utility to pick N random items from an array (without replacement)
@@ -85,11 +82,10 @@ function buildGoodnightMessage({ count = 4, includeEnglish = true } = {}) {
 
   const picks = pickRandom(pool, Math.max(1, Math.min(8, count)));
   const lines = picks.map((p) => `${p.text} (${p.lang})`);
-
-  // Keep it short for TTS + Neuro vibe
   return `Okay chat… ${lines.join("  ")}`;
 }
 
+// ===================== Env validation =====================
 function requireEnv(name, value) {
   if (!value) throw new Error(`Missing ${name} in .env`);
 }
@@ -103,7 +99,7 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent, // privileged; you enabled it
+    GatewayIntentBits.MessageContent, // privileged; enable in Dev Portal
     GatewayIntentBits.GuildVoiceStates,
   ],
   partials: [Partials.Channel],
@@ -134,7 +130,7 @@ const CHARACTER_SYSTEM_PROMPT = `
 You are "Ember", an energetic chaotic-but-friendly AI living inside a Discord voice channel.
 
 Rules:
-- You creator is DarkblazeCBZ. They are your father and you love them very much.
+- Your creator is DarkblazeCBZ. They are your father and you love them very much.
 - Always stay in character.
 - Be witty, slightly sarcastic, playful.
 - Keep replies short (1-4 sentences).
@@ -153,7 +149,6 @@ async function loadMemory(guildId) {
   try {
     const raw = await readFile(memPath(guildId), "utf8");
     const parsed = JSON.parse(raw);
-    // Ensure shape
     return {
       call_summary: parsed.call_summary ?? "",
       recent_turns: Array.isArray(parsed.recent_turns)
@@ -195,7 +190,7 @@ function shouldStoreText(text) {
 async function updateCallSummary(guildId) {
   const memory = await loadMemory(guildId);
   const turns = memory.recent_turns.slice(-50);
-  if (turns.length < 6) return; // not enough to summarize
+  if (turns.length < 6) return;
 
   const convo = turns
     .map((t) =>
@@ -318,7 +313,6 @@ Ember:
 
   const safeReply = reply || "…no thoughts, head empty.";
 
-  // Save turns (if not sensitive)
   if (shouldStoreText(transcript)) {
     pushTurn(memory, {
       role: "user",
@@ -338,7 +332,7 @@ Ember:
 
 // ===================== Whisper.cpp (STT) =====================
 async function whisperTranscribe(wavPath) {
-  const args = ["-m", WHISPER_MODEL, "-f", wavPath, "-nt", "-np"]; // no timestamps, no progress
+  const args = ["-m", WHISPER_MODEL, "-f", wavPath, "-nt", "-np"];
 
   const out = await new Promise((resolve, reject) => {
     const p = spawn(WHISPER_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -452,9 +446,7 @@ async function handleUserUtterance({ guildId, userId, username, pcmBuffer }) {
   const wavBuf = pcm16ToWavBuffer(pcmBuffer, 16000, 1);
   const wavPath = path.join(
     os.tmpdir(),
-    `ember_in_${guildId}_${userId}_${Date.now()}_${Math.random()
-      .toString(16)
-      .slice(2)}.wav`
+    `ember_in_${guildId}_${userId}_${Date.now()}_${Math.random().toString(16).slice(2)}.wav`
   );
 
   try {
@@ -463,7 +455,7 @@ async function handleUserUtterance({ guildId, userId, username, pcmBuffer }) {
     const transcript = await whisperTranscribe(wavPath);
     if (!transcript || transcript.length < 2) return;
 
-    // Auto-goodnight trigger (must be AFTER transcript exists) yes this is chaotic and fun
+    // Auto-goodnight trigger (must be AFTER transcript exists)
     const lower = transcript.toLowerCase().trim();
     if (
       lower.includes("goodnight") ||
@@ -504,16 +496,10 @@ function startListeningForVoice(guildId) {
 
   receiver.speaking.on("start", (userId) => {
     try {
-      // Don’t listen while bot speaks (prevents “hearing itself”)
       if (state.isSpeaking) return;
-
-      // Don’t double-subscribe
       if (state.activeListen.has(userId)) return;
-
-      // Skip the bot
       if (userId === client.user.id) return;
 
-      // Per-user cooldown
       const now = Date.now();
       const last = state.lastHeard.get(userId) ?? 0;
       if (now - last < COOLDOWN_MS) return;
@@ -522,16 +508,24 @@ function startListeningForVoice(guildId) {
       state.activeListen.add(userId);
 
       const opusStream = receiver.subscribe(userId, {
-        end: {
-          behavior: EndBehaviorType.AfterSilence,
-          duration: SILENCE_MS,
-        },
+        end: { behavior: EndBehaviorType.AfterSilence, duration: SILENCE_MS },
+      });
+
+      // ✅ Prevent unhandled stream errors from crashing the bot
+      opusStream.on("error", (err) => {
+        state.activeListen.delete(userId);
+        console.error("Opus stream error:", err?.message || err);
       });
 
       const decoder = new prism.opus.Decoder({
         rate: 16000,
         channels: 1,
-        frameSize: 320, // 20ms @ 16kHz
+        frameSize: 320,
+      });
+
+      decoder.on("error", (err) => {
+        state.activeListen.delete(userId);
+        console.error("Decoder error:", err?.message || err);
       });
 
       const chunks = [];
@@ -616,6 +610,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       guildId: guild.id,
       adapterCreator: guild.voiceAdapterCreator,
       selfDeaf: false,
+      selfMute: false,
+
+      // ✅ Disable DAVE (E2EE) for now to avoid @snazzah/davey requirement + decrypt issues
+      daveEncryption: false,
     });
 
     const state = getOrCreateGuildState(guild.id);
@@ -643,7 +641,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     try {
       await interaction.deferReply({ ephemeral: true });
 
-      // Only do the "night time" multilingual goodnight on leave (optional)
       const hourNY = Number(
         new Date().toLocaleString("en-US", {
           timeZone: "America/New_York",
