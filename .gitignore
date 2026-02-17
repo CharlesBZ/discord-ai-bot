@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+memory/
+*.wav
+*.pcm
+*.mp3
+*.onnx
+*.onnx.json
+*.bin
+whisper.cpp/
+piper/
+dist/
+build/
+coverage/
+*.log
+.DS_Store
