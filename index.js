@@ -170,7 +170,7 @@ async function saveMemory(guildId, memory) {
   await writeFile(memPath(guildId), JSON.stringify(memory, null, 2), "utf8");
 }
 
-function pushTurn(memory, turn, maxTurns = 60) {
+function pushTurn(memory, turn, maxTurns = 600) {
   memory.recent_turns.push(turn);
   if (memory.recent_turns.length > maxTurns) {
     memory.recent_turns.splice(0, memory.recent_turns.length - maxTurns);
