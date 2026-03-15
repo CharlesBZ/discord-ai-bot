@@ -8,6 +8,10 @@ memory/
 *.onnx
 *.onnx.json
 *.bin
+# Binaries and models (platform-specific / too large for git)
+bin/
+whisper/
+models/
 whisper.cpp/
 piper/
 dist/
