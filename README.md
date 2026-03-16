@@ -1,318 +1,314 @@
-# Ember
+# 🔥 Ember AI — Discord Voice Bot
 
-**A fully local voice-to-voice Discord bot** — no paid APIs required.
+A fully local, voice-to-voice AI bot for Discord. Ember listens in voice channels, transcribes speech with **Whisper.cpp**, generates replies with **Ollama**, speaks back with **Piper TTS**, and remembers conversations across calls.
 
-Neurocore can join Discord voice channels, listen to users speaking, process conversations with a local LLM, and respond naturally with text-to-speech — all while maintaining conversation memory across sessions.
-
-> **Architecture:** Discord VC → Opus decode → Whisper → Ollama → Piper → Discord VC
+No cloud APIs. Everything runs on your machine.
 
 ---
 
-## ✨ Features
+## How it works
 
-- ✅ **Voice-to-voice conversation** in Discord voice channels
-- ✅ **Local speech-to-text** via `whisper.cpp`
-- ✅ **Local LLM responses** via `Ollama`
-- ✅ **Local text-to-speech** via `Piper`
-- ✅ **Persistent memory** per server (`./memory/guild_<id>.json`)
-- ✅ **Slash commands** (`/join` and `/leave`)
-- ✅ **Anti-feedback loop** (bot won't transcribe while speaking)
-- ✅ **Spam prevention** with cooldown controls
-
----
-
-## 📋 Requirements
-
-### System
-
-- **Ubuntu** (recommended)
-- **Node.js** LTS (v20 or v22 recommended)
-- **NVIDIA GPU** (optional but greatly improves performance)
-
-### External Tools
-
-- **Ollama** running locally at `http://127.0.0.1:11434`
-- **whisper.cpp** compiled locally
-- **Piper TTS** installed with a US female voice (e.g., `en_US-amy-medium`)
+```
+You speak in VC
+    → Discord sends Opus audio
+    → Decoded to 48kHz stereo PCM
+    → Downsampled to 16kHz mono
+    → Whisper.cpp transcribes to text
+    → Ollama generates a reply (with memory context)
+    → Piper TTS synthesises speech
+    → ffmpeg resamples to 48kHz stereo
+    → Ember speaks back in VC
+    → Turn saved to memory/guild_<id>.json
+```
 
 ---
 
-## 🚀 Setup Instructions
+## Stack
 
-### 1. Discord Bot Setup
-
-1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create a new application → Navigate to **Bot** → Click **Add Bot**
-3. Copy your **Bot Token** (keep this secret!)
-4. Enable **Privileged Gateway Intents**:
-   - ✅ Message Content Intent
-5. Invite the bot to your server:
-   - Go to OAuth2 → URL Generator
-   - Select scopes: `bot`, `applications.commands`
-   - Copy the generated URL and open it in your browser
+| Layer            | Tool                                      |
+| ---------------- | ----------------------------------------- |
+| Bot framework    | discord.js 14 + @discordjs/voice          |
+| Speech-to-text   | Whisper.cpp (ggml-base.en or any model)   |
+| Language model   | Ollama (qwen2.5:7b or any local model)    |
+| Text-to-speech   | Piper TTS (en_US-amy-medium or any voice) |
+| Audio resampling | ffmpeg-static                             |
+| E2EE (DAVE)      | @snazzah/davey                            |
+| Runtime          | Node.js 20+ / TypeScript via tsx          |
 
 ---
 
-### 2. Install Node Dependencies
+## Project structure
 
-From the project folder:
+```
+ember-bot/
+├── src/
+│   ├── index.ts            # Discord client, slash commands, shutdown
+│   ├── config.ts           # Typed env var validation
+│   ├── memory.ts           # Persistent per-guild JSON memory
+│   ├── ollama.ts           # LLM replies + call summarisation
+│   ├── stt.ts              # Whisper transcription + WAV builder
+│   ├── tts.ts              # Piper TTS + ffmpeg resample pipeline
+│   ├── voice.ts            # Per-guild state, listen pipeline, speak queue
+│   ├── deploy-commands.ts  # Slash command registration script
+│   └── diagnose.ts         # Full pipeline self-test
+├── bin/
+│   ├── whisper-cli         # Built whisper.cpp binary
+│   └── piper               # Piper TTS binary
+├── models/
+│   ├── ggml-base.en.bin
+│   ├── en_US-amy-medium.onnx
+│   └── en_US-amy-medium.onnx.json
+├── memory/                 # Auto-created, per-guild JSON files
+├── .env
+├── .env.example
+└── package.json
+```
+
+---
+
+## Prerequisites
+
+- Node.js 20+
+- [Ollama](https://ollama.com) running locally (`ollama serve`)
+- Your chosen model pulled: `ollama pull qwen2.5:7b`
+- `build-essential` and `cmake` for building Whisper.cpp
+
+---
+
+## Installation
+
+### 1. Clone and install dependencies
 
 ```bash
+git clone <your-repo>
+cd ember-bot
 npm install
 ```
 
-If you encounter the DAVE error, install:
+### 2. Install Whisper.cpp locally
 
 ```bash
-npm install @snazzah/davey
-```
-
----
-
-### 3. Install & Run Ollama
-
-**Install Ollama:**
-
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-**Pull a recommended model:**
-
-```bash
-ollama pull qwen2.5:7b
-```
-
-**Verify the API is running:**
-
-```bash
-curl http://127.0.0.1:11434/api/tags
-```
-
----
-
-### 4. Install whisper.cpp
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake git
-
-cd ~
-git clone https://github.com/ggml-org/whisper.cpp
+git clone https://github.com/ggml-org/whisper.cpp.git
 cd whisper.cpp
 cmake -B build
-cmake --build build -j
-bash ./models/download-ggml-model.sh base.en
+cmake --build build -j$(nproc) --config Release
+cd ..
+
+mkdir -p bin models
+cp whisper.cpp/build/bin/whisper-cli ./bin/whisper-cli
+
+bash whisper.cpp/models/download-ggml-model.sh base.en
+cp whisper.cpp/models/ggml-base.en.bin ./models/ggml-base.en.bin
 ```
 
-**Test the installation:**
+### 3. Install Piper TTS locally
 
 ```bash
-./build/bin/whisper-cli -m ./models/ggml-base.en.bin -f ./samples/jfk.wav
+# Linux x64
+curl -L https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz \
+  | tar -xz -C bin/ --strip-components=1
+
+# Download voice model
+wget "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx?download=true" \
+  -O models/en_US-amy-medium.onnx
+
+wget "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx.json?download=true" \
+  -O models/en_US-amy-medium.onnx.json
 ```
 
----
-
-### 5. Install Piper TTS
-
-**Install required runtime packages:**
+### 4. Configure environment
 
 ```bash
-sudo apt update
-sudo apt install -y espeak-ng espeak-ng-data libespeak-ng1
+cp .env.example .env
 ```
 
-**Download a Piper voice model** (Amy - US female):
-
-```bash
-mkdir -p ~/piper/voices
-cd ~/piper/voices
-
-wget -O en_US-amy-medium.onnx \
-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx?download=true
-
-wget -O en_US-amy-medium.onnx.json \
-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json?download=true
-```
-
-**Test Piper output:**
-
-```bash
-echo "Neurocore online." | piper \
-  --model ~/piper/voices/en_US-amy-medium.onnx \
-  --output_file /tmp/piper_test.wav
-
-ls -lh /tmp/piper_test.wav
-```
-
----
-
-### 6. Configure Environment Variables
-
-Create a `.env` file in the project root:
+Edit `.env`:
 
 ```env
-DISCORD_TOKEN=YOUR_DISCORD_BOT_TOKEN
+# Discord
+DISCORD_TOKEN=your_bot_token
+DISCORD_CLIENT_ID=your_application_id
+GUILD_ID=your_server_id
 
 # Ollama
 OLLAMA_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=qwen2.5:7b
 
+# Whisper
+WHISPER_BIN=./bin/whisper-cli
+WHISPER_MODEL=./models/ggml-base.en.bin
+
 # Piper
-PIPER_BIN=/usr/local/bin/piper
-PIPER_MODEL=/home/youruser/piper/voices/en_US-amy-medium.onnx
+PIPER_BIN=./bin/piper
+PIPER_MODEL=./models/en_US-amy-medium.onnx
 PIPER_SPEAK_RATE=0.85
 
-# whisper.cpp
-WHISPER_BIN=/home/youruser/whisper.cpp/build/bin/whisper-cli
-WHISPER_MODEL=/home/youruser/whisper.cpp/models/ggml-base.en.bin
-
-# Tuning parameters
+# Voice tuning
 SILENCE_MS=900
 MIN_UTTERANCE_MS=700
 COOLDOWN_MS=2000
-```
 
-**Note:** If Piper is not in `/usr/local/bin`, set `PIPER_BIN` to the actual file path.
+# Memory
+MEMORY_DIR=./memory
+```
 
 ---
 
-### 7. Register Slash Commands
+## Discord Developer Portal setup
 
-This project includes a `register-commands.js` script to register `/join` and `/leave` commands.
-
-Run:
-
-```bash
-npm run register
-```
-
-**Tip:** For instant commands during development, register guild-specific commands instead of global commands.
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
+2. **New Application** → give it a name
+3. **General Information** → copy the **Application ID** → `DISCORD_CLIENT_ID`
+4. **Bot** tab:
+   - Click **Reset Token** → copy it → `DISCORD_TOKEN`
+   - Turn **Public Bot** OFF
+   - Enable all three **Privileged Gateway Intents**:
+     - ✅ Presence Intent
+     - ✅ Server Members Intent
+     - ✅ Message Content Intent
+5. **OAuth2 → URL Generator**:
+   - Scopes: `bot` + `applications.commands`
+   - Permissions: `Connect`, `Speak`, `Use Voice Activity`, `Send Messages`, `Read Message History`, `View Channels`
+   - Copy the generated URL and open it to invite the bot to your server
+6. In Discord: **User Settings → Advanced → Developer Mode ON**
+   - Right-click your server → **Copy Server ID** → `GUILD_ID`
 
 ---
 
-### 8. Start the Bot
+## Running
+
+### Verify everything works first
 
 ```bash
+npm run diagnose
+```
+
+Tests all 7 layers: env vars, binaries, ffmpeg, Whisper, Piper, Ollama, and Discord token. Fix any failures before proceeding.
+
+### Register slash commands
+
+```bash
+# Guild deploy (instant, for development)
+npm run deploy
+
+# Global deploy (up to 1 hour, for production)
+npm run deploy:global
+```
+
+Only needs to be run once, or when commands change.
+
+### Start the bot
+
+```bash
+# Development (no compile step)
+npm run dev
+
+# Production
+npm run build
 npm start
 ```
 
-You should see:
+---
 
-- Logged in message
-- Paths printed for Ollama/Whisper/Piper
+## Slash commands
+
+| Command        | Options            | Description                                         |
+| -------------- | ------------------ | --------------------------------------------------- |
+| `/join`        | —                  | Ember joins your voice channel and starts listening |
+| `/leave`       | —                  | Ember leaves, saves a call recap to memory          |
+| `/goodnight`   | `count`, `english` | Multilingual goodnight, spoken + posted in chat     |
+| `/memory`      | `turns` (1–30)     | Shows call summary + recent turns (ephemeral)       |
+| `/clearmemory` | —                  | Wipes all memory for this server                    |
+| `/status`      | —                  | Shows voice state, model paths, connection info     |
+
+You can also **@mention** Ember in any text channel and she'll reply in chat and speak the response in VC if connected.
 
 ---
 
-## 🎮 Usage (in Discord)
+## Memory system
 
-1. **Join a voice channel** in your Discord server
-2. **Run the command:**
-   ```
-   /join
-   ```
-3. **Speak normally** in the voice channel
-4. **Wait ~1 second** after you stop talking
-5. **The bot will respond** with voice
+Ember maintains a per-guild JSON file at `memory/guild_<id>.json` containing:
 
-**To leave:**
+- **`recent_turns`** — last 60 exchanges (user + assistant), with timestamps and usernames
+- **`call_summary`** — a 3–6 bullet recap generated by Ollama when `/leave` is called
 
-```
-/leave
-```
+On `/join`, if a summary exists Ember reads it aloud as a greeting. This gives her continuity across sessions without feeding the full history into every prompt.
 
-_(This also saves a call recap to memory)_
+Sensitive content (passwords, API keys, tokens) is filtered before storage.
 
 ---
 
-## 💾 Memory System
+## Personality
 
-Memory is stored per server in:
+Ember is configured via the system prompt in `src/ollama.ts`. By default she is:
 
-```
-./memory/guild_<SERVER_ID>.json
-```
+- Witty, slightly sarcastic, chaotic-friendly
+- Keeps replies to 1–4 sentences (optimised for spoken audio)
+- Loves robotics, mechatronics, engineering, and coding
+- Created by **Charlo** (her father, as far as she's concerned)
 
-Each memory file contains:
-
-- **`call_summary`**: A bullet-point recap of the last call
-- **`recent_turns`**: Rolling conversation context
-
-The bot injects both into the prompt, enabling it to remember previous sessions.
+Edit `CHARACTER_SYSTEM_PROMPT` in `src/ollama.ts` to customise her personality.
 
 ---
 
-## ⚙️ Tuning Parameters
+## Tuning
 
-Adjust these values in your `.env` file:
-
-| Issue                            | Solution                                   |
-| -------------------------------- | ------------------------------------------ |
-| Bot interrupts too quickly       | Increase `SILENCE_MS` (e.g., `1200`)       |
-| Bot responds to background noise | Increase `MIN_UTTERANCE_MS` (e.g., `1200`) |
-| Bot is too spammy                | Increase `COOLDOWN_MS` (e.g., `3000`)      |
-| Speech is too fast               | Lower `PIPER_SPEAK_RATE` (e.g., `0.78`)    |
+| Env var            | Default      | Effect                                                    |
+| ------------------ | ------------ | --------------------------------------------------------- |
+| `SILENCE_MS`       | `900`        | How long to wait after you stop talking before processing |
+| `MIN_UTTERANCE_MS` | `700`        | Ignore clips shorter than this (filters mic noise)        |
+| `COOLDOWN_MS`      | `2000`       | Minimum gap between captures per user                     |
+| `PIPER_SPEAK_RATE` | `0.85`       | Speech speed (0.6 = slow, 1.0 = normal, 1.6 = fast)       |
+| `OLLAMA_MODEL`     | `qwen2.5:7b` | Any model pulled in Ollama                                |
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
-### "Used disallowed intents"
-
-Enable **Message Content Intent** in Discord Developer Portal → Bot → Privileged Gateway Intents.
-
-### "Cannot utilize the DAVE protocol..."
-
-Install the required package:
+**Voice connection stuck at `signalling` or `connecting`**
+Discord enforces DAVE (E2EE) on all voice channels as of March 2026. Make sure `@snazzah/davey` is installed:
 
 ```bash
 npm install @snazzah/davey
+node -e "const { generateDependencyReport } = require('@discordjs/voice'); console.log(generateDependencyReport())"
 ```
 
-### Piper shared library errors
+The report should show a DAVE Protocol section with a version number.
 
-Install runtime dependencies:
+**No audio playback / Ember speaks but you hear nothing**
+Run `npm run diagnose` — specifically check the Piper + ffmpeg pipeline section. The TTS chain requires ffmpeg to resample Piper's output to 48kHz stereo before Discord will play it.
+
+**Transcripts are empty or gibberish**
+Whisper needs 16kHz mono PCM. The voice pipeline downsamples Discord's 48kHz stereo automatically — if you're getting garbage, check that `@discordjs/opus` built correctly:
 
 ```bash
-sudo apt install -y espeak-ng espeak-ng-data libespeak-ng1
+node -e "require('@discordjs/opus')"
 ```
 
-### "Ollama model not found"
+If it throws, rebuild: `npm install @discordjs/opus --build-from-source`
 
-List available models:
+**Memory not saving**
+Check write permissions on the `./memory` directory. `saveMemory()` now logs errors explicitly — watch the console for `[memory] saveMemory FAILED`.
 
-```bash
-ollama list
+---
+
+## .gitignore
+
+```gitignore
+# Binaries and models (platform-specific / too large for git)
+bin/
+models/
+whisper.cpp/
+
+# Runtime
+memory/
+dist/
+node_modules/
+.env
 ```
 
-Pull the model:
-
-```bash
-ollama pull qwen2.5:7b
-```
-
 ---
 
-## 🗺️ Roadmap
+## License
 
-- [ ] Push-to-talk mode (`/listen on|off`)
-- [ ] Better diarization (multi-speaker tracking)
-- [ ] User profile facts memory (preferences, nicknames)
-- [ ] Web dashboard for moderation & settings
-- [ ] Dockerized one-command deployment
-
----
-
-## 📄 License
-
-MIT License
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
----
-
-**Built with ❤️ for Discord communities**
+MIT — built by Charlo / [DARKBLAZE.DEV](https://darkblaze.dev)
