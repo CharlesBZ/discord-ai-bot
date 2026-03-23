@@ -34,7 +34,7 @@ export const config = {
   },
   memory: {
     dir: optionalEnv("MEMORY_DIR", "./memory"),
-    maxRecentTurns: 60,
+    maxRecentTurns: 1000,
     summaryTriggerTurns: 6,
   },
 } as const;
