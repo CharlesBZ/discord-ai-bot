@@ -5,7 +5,7 @@ import { config } from "./config";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface MemoryTurn {
-  role: "user" | "assistant";
+  role: "user" | "ember";
   text: string;
   ts: number;
   userId?: string;

@@ -123,7 +123,7 @@ Ember:
     });
   }
   if (isSafeToStore(safeReply)) {
-    pushTurn(memory, { role: "assistant", text: safeReply, ts: Date.now() });
+    pushTurn(memory, { role: "ember", text: safeReply, ts: Date.now() });
   }
 
   await saveMemory(guildId, memory);
